@@ -49,9 +49,15 @@ class NerfNet(nn.Module):
         self.pos_encoder = PositionalEncoding(num_octaves=15, start_octave=pos_start_octave)
         self.ray_encoder = PositionalEncoding(num_octaves=15)
 
+        # why 90? in our case, posenc(concat(position, direction)) has 180 dimensions, and that's what's passed through
+        # the decoder. however, the decoder still always uses 768 dimensions for QKV and 1536 for the MLP (as you use too)
+        # 180 == 2 (origin, direction) * 2 (sin/cos) * 3 (XYZ) * 15 (num_frequencies)
         self.transformer = Transformer(90, depth=num_att_blocks, heads=12, dim_head=64,
                                        mlp_dim=1536, selfatt=False)
 
+        # should be 180. the output of the transformer has 180 dimensions. for density & RGB, we use that full vector, but
+        # pass it into different MLPs, one each for RBG and density (both have 1 hidden layer with 128 dimensions).
+        # note that for the density prediction, we use a softplus activation at the end.
         self.color_predictor = nn.Sequential(
             nn.Linear(179, 256),
             nn.ReLU(),

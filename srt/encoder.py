@@ -1,3 +1,5 @@
+# reviewed
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -30,33 +32,39 @@ class SRTEncoder(nn.Module):
         self.ray_encoder = RayEncoder(pos_octaves=15, pos_start_octave=pos_start_octave,
                                       ray_octaves=15)
 
-        conv_blocks = [SRTConvBlock(idim=183, hdim=96)]
+        conv_blocks = [SRTConvBlock(idim=183, hdim=96)]  # idim is 180 for us -- we don't pass the raw XYZ values in the posenc 
+function
         cur_hdim = 96
         for i in range(1, num_conv_blocks):
             if cur_hdim < 1536:
                 cur_hdim *= 2
-
-            if cur_hdim < 1536:
-                output_dim = None
-            else:
-                output_dim = cur_hdim
-
-            conv_blocks.append(SRTConvBlock(idim=cur_hdim, odim=output_dim))
+            # no-op for our configs, but we always double the features for every layer
+            conv_blocks.append(SRTConvBlock(idim=cur_hdim, odim=None))
         self.conv_blocks = nn.Sequential(*conv_blocks)
 
         self.per_patch_linear = nn.Conv2d(1536, 768, kernel_size=1)
 
         self.pixel_embedding = nn.Parameter(torch.randn(1, 768, 15, 20))
+        # FWIW, we initialize with stddev=1/math.sqrt(d). Given that model initialization likely also differs between torch & jax, I 
+don't think this needs to be addressed
         self.canonical_camera_embedding = nn.Parameter(torch.randn(1, 1, 768))
         self.non_canonical_camera_embedding = nn.Parameter(torch.randn(1, 1, 768))
 
+        # this one's interesting. SRT as in the CVPR paper does not use actual self attention, but a special type:
+        # the current features in the Nth layer don't self-attend, but they always attend into the initial patch embedding
+        # (i.e., the output of the CNN). I think in your code, you get that behavior of you disable self-attention, but then call
+        # transformer(x, x) regardless.
+        # further, we used post-normalization rather than pre-normalization.
+        # since then though, in OSRT, we found pre-norm and actual self-attention to perform better overall.
+        # I think it's fine to use what works better here, but it may be less stable under some circumstances.
         self.transformer = Transformer(768, depth=num_att_blocks, heads=12, dim_head=64,
                                        mlp_dim=1536, selfatt=True)
 
     def forward(self, images, camera_pos, rays):
         """
         Args:
-            images: [batch_size, num_images, 3, height, width]. Assume the first image is canonical.
+            images: [batch_size, num_images, 3, height, width]. Assume the first image is canonical.  # just in case: the input 
+images should be shuffled in the data reader
             camera_pos: [batch_size, num_images, 3]
             rays: [batch_size, num_images, height, width, 3]
         Returns:

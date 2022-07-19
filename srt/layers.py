@@ -124,6 +124,7 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 
+# see encoder.py for comment about the transformer
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0., selfatt=True):
         super().__init__()
